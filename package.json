@@ -1,7 +1,8 @@
 {
   "type": "module",
   "scripts": {
-    "fetch": "node --env-file-if-exists=.env fetch.ts"
+    "fetch": "node --env-file-if-exists=.env fetch.ts",
+    "build": "node build.ts"
   },
   "dependencies": {
     "viem": "^2"

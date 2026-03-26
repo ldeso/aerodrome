@@ -170,10 +170,10 @@ type RawEpoch = {
 };
 type EpochRecord = {
   epoch_ts: number;
+  epoch_number: number;
   epoch_date: string;
   price_date: string;
   pool_name: string;
-  pool_address: string;
   total_votes: number;
   pool_votes: number;
   pool_vote_pct: number;
@@ -187,7 +187,8 @@ type EpochRecord = {
   token0: string;
   fees_token1_usd: number;
   token1: string;
-  epoch_number: number;
+  pool_address: string;
+  voter_address: string;
 };
 type PriceMap = Map<string, Map<string, number>>; // token -> (YYYY-MM-DD -> usd)
 
@@ -508,9 +509,12 @@ async function main() {
       const iDate = header.indexOf("epoch_date");
       const iPool = header.indexOf("pool_address");
       const iVoterVotes = header.indexOf("voter_votes");
+      const iVoterAddr = header.indexOf("voter_address");
       if (iDate >= 0 && iPool >= 0 && iVoterVotes >= 0) {
         for (let i = 1; i < lines.length; i++) {
           const cols = lines[i].split(",");
+          // Skip rows for a different voter address
+          if (cols[iVoterAddr] !== voterAddress) continue;
           const epochDate = cols[iDate];
           const pool = cols[iPool]?.toLowerCase();
           const voterVotes = parseFloat(cols[iVoterVotes]);
@@ -680,13 +684,13 @@ async function main() {
     entries.push({
       record: {
         epoch_ts: epochStartTs,
+        epoch_number: 0,
         epoch_date: new Date(epochStartTs * 1000).toISOString().slice(0, 10),
         price_date:
           epochStartTs + WEEK > Math.floor(Date.now() / 1000)
             ? new Date().toISOString().slice(0, 10)
             : new Date((epochStartTs + WEEK) * 1000).toISOString().slice(0, 10),
         pool_name: poolName(pool, tokens),
-        pool_address: ep.lp,
         total_votes: 0,
         pool_votes: Number(ep.votes) / 1e18,
         pool_vote_pct: 0,
@@ -705,7 +709,8 @@ async function main() {
         token0: tokens.get(pool.token0)?.symbol ?? "???",
         fees_token1_usd: 0,
         token1: tokens.get(pool.token1)?.symbol ?? "???",
-        epoch_number: 0,
+        pool_address: ep.lp,
+        voter_address: voterAddress,
       },
       fees: ep.fees,
       bribes: ep.bribes,
@@ -874,160 +879,7 @@ async function main() {
     (a, b) => b.epoch_ts - a.epoch_ts || b.pool_votes - a.pool_votes
   );
 
-  // 11. Write index.html (static, no JavaScript)
-  {
-    const escapeHtml = (s: string) =>
-      s
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-    const fmt = (n: number) =>
-      n.toLocaleString("en-US", { maximumFractionDigits: 0 });
-    const usdFmt = (n: number) =>
-      "$" +
-      n.toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-    const tagSpans = (arr: string[]) =>
-      arr.map((s) => `<span>${escapeHtml(s)}</span>`).join("");
-
-    // Group records by epoch
-    const byEpochArr = new Map<number, typeof records>();
-    for (const r of records) {
-      let arr = byEpochArr.get(r.epoch_ts);
-      if (!arr) {
-        arr = [];
-        byEpochArr.set(r.epoch_ts, arr);
-      }
-      arr.push(r);
-    }
-    const sortedEpochs = [...byEpochArr.entries()].sort((a, b) => b[0] - a[0]);
-
-    const sections: string[] = [];
-    for (let i = 0; i < sortedEpochs.length; i++) {
-      const [, epochRecords] = sortedEpochs[i];
-      epochRecords.sort((a, b) => b.pool_votes - a.pool_votes);
-      const first = epochRecords[0];
-
-      // Compute totals for the epoch
-      const trueVotes = epochTotals.get(first.epoch_ts) ?? 0;
-      const epochVoterPoolVotes = voterVotesByEpoch.get(first.epoch_ts);
-      const trueVoterVotes = epochVoterPoolVotes
-        ? [...epochVoterPoolVotes.values()].reduce((a, b) => a + b, 0)
-        : 0;
-
-      const totalRow = `          <tr style="font-weight:600;background:#f0f0f0">
-            <td></td>
-            <td>TOTAL</td>
-            <td class="right">${fmt(trueVotes)}</td>
-            <td></td>
-            <td class="right">${fmt(trueVoterVotes)}</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-          </tr>`;
-
-      const rows = epochRecords
-        .map(
-          (r, j) =>
-            `          <tr>
-            <td>${j + 1}</td>
-            <td>${escapeHtml(r.pool_name)}</td>
-            <td class="right">${fmt(r.pool_votes)}</td>
-            <td class="right">${r.pool_vote_pct.toFixed(2)}%</td>
-            <td class="right">${fmt(r.voter_votes)}</td>
-            <td class="right">${r.voter_vote_pct.toFixed(2)}%</td>
-            <td class="right">${usdFmt(r.fees_bribes_usd)}</td>
-            <td class="right">${usdFmt(r.fees_usd)}</td>
-            <td class="right">${usdFmt(r.bribes_usd)}</td>
-            <td><div class="tags">${tagSpans(r.bribe_tokens)}</div></td>
-            <td class="right">${usdFmt(r.fees_token0_usd)}</td>
-            <td>${escapeHtml(r.token0)}</td>
-            <td class="right">${usdFmt(r.fees_token1_usd)}</td>
-            <td>${escapeHtml(r.token1)}</td>
-          </tr>`
-        )
-        .join("\n");
-
-      sections.push(`  <details${i === 0 ? " open" : ""}>
-    <summary>Epoch ${first.epoch_number} \u2013 ${first.epoch_date}${
-        i === 0
-          ? ` (current epoch as of ${new Date()
-              .toISOString()
-              .replace("T", " ")
-              .replace(/:\d{2}\.\d+Z$/, " UTC")})`
-          : ""
-      }</summary>
-    <div style="overflow-x:auto">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Pool</th>
-            <th class="right">Pool Votes</th>
-            <th class="right">Pool Vote %</th>
-            <th class="right">Voter Votes</th>
-            <th class="right">Voter Vote %</th>
-            <th class="right">Fees + Bribes (USD)</th>
-            <th class="right">Fees (USD)</th>
-            <th class="right">Bribes (USD)</th>
-            <th>Bribe Tokens</th>
-            <th class="right">Fees Token0 (USD)</th>
-            <th>Token0</th>
-            <th class="right">Fees Token1 (USD)</th>
-            <th>Token1</th>
-          </tr>
-        </thead>
-        <tbody>
-  ${rows}
-  ${totalRow}
-        </tbody>
-      </table>
-    </div>
-  </details>`);
-    }
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Aerodrome Votes</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, sans-serif; padding: 1rem; color: #1a1a1a; background: #fafafa; }
-    h1 { font-size: 1.4rem; margin-bottom: 1rem; }
-    details { margin-bottom: .5rem; }
-    summary { cursor: pointer; font-weight: 600; font-size: .95rem; padding: .5rem; background: #f0f0f0; border-radius: 4px; }
-    summary:hover { background: #e8e8e8; }
-    table { width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: .5rem; }
-    th, td { padding: .4rem .6rem; text-align: left; border-bottom: 1px solid #e0e0e0; white-space: nowrap; }
-    th { background: #f0f0f0; font-weight: 600; position: sticky; top: 0; }
-    .right { text-align: right; }
-    .tags { display: flex; gap: .2rem; flex-wrap: wrap; }
-    .tags span { background: #e8e8e8; padding: .1rem .3rem; border-radius: 3px; font-size: .75rem; }
-  </style>
-</head>
-<body>
-  <h1>Aerodrome Votes → <a href="votes.csv">votes.csv</a></h1>
-  <p style="font-size:.85rem;margin-bottom:1rem;color:#555">Voter: <code>${escapeHtml(
-    voterAddress
-  )}</code></p>
-${sections.join("\n")}
-</body>
-</html>`;
-    writeFileSync("index.html", html);
-  }
-
-  // 12. Write votes.csv
+  // 11. Write votes.csv
   const fields = [
     "epoch_number",
     "epoch_date",
@@ -1046,6 +898,7 @@ ${sections.join("\n")}
     "fees_token1_usd",
     "token1",
     "pool_address",
+    "voter_address",
   ] as const;
 
   const csvLines = [fields.join(",")];
@@ -1062,7 +915,6 @@ ${sections.join("\n")}
     );
   }
   writeFileSync("votes.csv", csvLines.join("\n") + "\n");
-
   console.log(
     `Saved ${records.length} records across ${epochTimestamps.length} epochs`
   );

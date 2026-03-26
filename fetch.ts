@@ -1,4 +1,10 @@
-import { createPublicClient, http, parseAbiItem, type Address } from "viem";
+import {
+  createPublicClient,
+  http,
+  parseAbi,
+  parseAbiItem,
+  type Address,
+} from "viem";
 import { base } from "viem/chains";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 
@@ -18,134 +24,15 @@ const DAY = 24 * 3600;
 
 // -- ABI fragments (only what we use) --
 
-const lpSugarAbi = [
-  {
-    inputs: [
-      { name: "_limit", type: "uint256" },
-      { name: "_offset", type: "uint256" },
-      { name: "_filter", type: "uint256" },
-    ],
-    name: "all",
-    outputs: [
-      {
-        components: [
-          { name: "lp", type: "address" },
-          { name: "symbol", type: "string" },
-          { name: "decimals", type: "uint8" },
-          { name: "liquidity", type: "uint256" },
-          { name: "type", type: "int24" },
-          { name: "tick", type: "int24" },
-          { name: "sqrt_ratio", type: "uint160" },
-          { name: "token0", type: "address" },
-          { name: "reserve0", type: "uint256" },
-          { name: "staked0", type: "uint256" },
-          { name: "token1", type: "address" },
-          { name: "reserve1", type: "uint256" },
-          { name: "staked1", type: "uint256" },
-          { name: "gauge", type: "address" },
-          { name: "gauge_liquidity", type: "uint256" },
-          { name: "gauge_alive", type: "bool" },
-          { name: "fee", type: "address" },
-          { name: "bribe", type: "address" },
-          { name: "factory", type: "address" },
-          { name: "emissions", type: "uint256" },
-          { name: "emissions_token", type: "address" },
-          { name: "emissions_cap", type: "uint256" },
-          { name: "pool_fee", type: "uint256" },
-          { name: "unstaked_fee", type: "uint256" },
-          { name: "token0_fees", type: "uint256" },
-          { name: "token1_fees", type: "uint256" },
-          { name: "locked", type: "uint256" },
-          { name: "emerging", type: "uint256" },
-          { name: "created_at", type: "uint32" },
-          { name: "nfpm", type: "address" },
-          { name: "alm", type: "address" },
-          { name: "root", type: "address" },
-        ],
-        name: "",
-        type: "tuple[]",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { name: "_limit", type: "uint256" },
-      { name: "_offset", type: "uint256" },
-      { name: "_account", type: "address" },
-      { name: "_addresses", type: "address[]" },
-    ],
-    name: "tokens",
-    outputs: [
-      {
-        components: [
-          { name: "token_address", type: "address" },
-          { name: "symbol", type: "string" },
-          { name: "decimals", type: "uint8" },
-          { name: "account_balance", type: "uint256" },
-          { name: "listed", type: "bool" },
-          { name: "emerging", type: "bool" },
-        ],
-        name: "",
-        type: "tuple[]",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
+const lpSugarAbi = parseAbi([
+  "function all(uint256 _limit, uint256 _offset, uint256 _filter) view returns ((address lp, string symbol, uint8 decimals, uint256 liquidity, int24 type, int24 tick, uint160 sqrt_ratio, address token0, uint256 reserve0, uint256 staked0, address token1, uint256 reserve1, uint256 staked1, address gauge, uint256 gauge_liquidity, bool gauge_alive, address fee, address bribe, address factory, uint256 emissions, address emissions_token, uint256 emissions_cap, uint256 pool_fee, uint256 unstaked_fee, uint256 token0_fees, uint256 token1_fees, uint256 locked, uint256 emerging, uint32 created_at, address nfpm, address alm, address root)[])",
+  "function tokens(uint256 _limit, uint256 _offset, address _account, address[] _addresses) view returns ((address token_address, string symbol, uint8 decimals, uint256 account_balance, bool listed, bool emerging)[])",
+]);
 
-const epochStruct = {
-  components: [
-    { name: "ts", type: "uint256" },
-    { name: "lp", type: "address" },
-    { name: "votes", type: "uint256" },
-    { name: "emissions", type: "uint256" },
-    {
-      components: [
-        { name: "token", type: "address" },
-        { name: "amount", type: "uint256" },
-      ],
-      name: "bribes",
-      type: "tuple[]",
-    },
-    {
-      components: [
-        { name: "token", type: "address" },
-        { name: "amount", type: "uint256" },
-      ],
-      name: "fees",
-      type: "tuple[]",
-    },
-  ],
-  name: "",
-  type: "tuple[]",
-} as const;
-
-const rewardsSugarAbi = [
-  {
-    inputs: [
-      { name: "_limit", type: "uint256" },
-      { name: "_offset", type: "uint256" },
-    ],
-    name: "epochsLatest",
-    outputs: [epochStruct],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { name: "_limit", type: "uint256" },
-      { name: "_offset", type: "uint256" },
-      { name: "_address", type: "address" },
-    ],
-    name: "epochsByAddress",
-    outputs: [epochStruct],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
+const rewardsSugarAbi = parseAbi([
+  "function epochsLatest(uint256 _limit, uint256 _offset) view returns ((uint256 ts, address lp, uint256 votes, uint256 emissions, (address token, uint256 amount)[] bribes, (address token, uint256 amount)[] fees)[])",
+  "function epochsByAddress(uint256 _limit, uint256 _offset, address _address) view returns ((uint256 ts, address lp, uint256 votes, uint256 emissions, (address token, uint256 amount)[] bribes, (address token, uint256 amount)[] fees)[])",
+]);
 
 const votedEvent = parseAbiItem(
   "event Voted(address indexed voter, address indexed pool, uint256 indexed tokenId, uint256 weight, uint256 totalWeight, uint256 timestamp)"
@@ -196,6 +83,15 @@ type PriceMap = Map<string, Map<string, number>>; // token -> (YYYY-MM-DD -> usd
 
 // -- Helpers --
 
+function getOrSet<K, V>(map: Map<K, V>, key: K, init: () => V): V {
+  let v = map.get(key);
+  if (!v) {
+    v = init();
+    map.set(key, v);
+  }
+  return v;
+}
+
 /** POST JSON with exponential backoff on 429. Throws on other non-2xx responses. */
 async function postJson(url: string, body: object): Promise<any> {
   const MAX_RETRIES = 10;
@@ -221,6 +117,34 @@ async function postJson(url: string, body: object): Promise<any> {
   }
 }
 
+/** Paginated readContract fetch. Accumulates all pages into a single array.
+ *  When totalItems is provided, fetches ceil(totalItems/PAGE) pages instead of
+ *  stopping on a short page (needed when the contract returns short pages). */
+async function fetchAllPages<T>(
+  client: { readContract: (args: any) => Promise<any> },
+  params: {
+    address: Address;
+    abi: any;
+    functionName: string;
+    extraArgs?: readonly unknown[];
+    totalItems?: number;
+  }
+): Promise<T[]> {
+  const results: T[] = [];
+  const maxOffset = params.totalItems ?? Infinity;
+  for (let offset = 0; offset < maxOffset; offset += PAGE) {
+    const page = (await client.readContract({
+      address: params.address,
+      abi: params.abi,
+      functionName: params.functionName,
+      args: [BigInt(PAGE), BigInt(offset), ...(params.extraArgs ?? [])],
+    })) as T[];
+    results.push(...page);
+    if (page.length < PAGE && maxOffset === Infinity) break;
+  }
+  return results;
+}
+
 /** Build a human-readable pool name. CL pools have empty symbol in Sugar. */
 function poolName(pool: PoolMeta, tokenMap: Map<string, TokenMeta>): string {
   if (pool.symbol) return pool.symbol;
@@ -240,18 +164,18 @@ function rewardTokenSymbols(
     .map((r) => tokenMap.get(r.token.toLowerCase())?.symbol ?? "???");
 }
 
-function computeUsdForToken(
+function computeUsd(
   rewards: RawReward,
-  targetToken: string,
   tokenMap: Map<string, TokenMeta>,
   priceMap: PriceMap,
-  date: string
+  date: string,
+  targetToken?: string
 ): number {
   let total = 0;
   for (const r of rewards) {
     if (r.amount === 0n) continue;
     const addr = r.token.toLowerCase();
-    if (addr !== targetToken) continue;
+    if (targetToken && addr !== targetToken) continue;
     const decimals = tokenMap.get(addr)?.decimals ?? 18;
     const amount = Number(r.amount) / 10 ** decimals;
     const price = priceMap.get(addr)?.get(date) ?? 0;
@@ -306,24 +230,6 @@ async function fetchHistoricalPrices(
   return prices;
 }
 
-function computeUsd(
-  rewards: RawReward,
-  tokenMap: Map<string, TokenMeta>,
-  priceMap: PriceMap,
-  date: string
-): number {
-  let total = 0;
-  for (const r of rewards) {
-    if (r.amount === 0n) continue;
-    const addr = r.token.toLowerCase();
-    const decimals = tokenMap.get(addr)?.decimals ?? 18;
-    const amount = Number(r.amount) / 10 ** decimals;
-    const price = priceMap.get(addr)?.get(date) ?? 0;
-    total += amount * price;
-  }
-  return Math.round(total * 100) / 100;
-}
-
 function loadPricesCsv(): PriceMap {
   const prices: PriceMap = new Map();
   if (!existsSync("prices.csv")) return prices;
@@ -332,12 +238,7 @@ function loadPricesCsv(): PriceMap {
     const [date, token, , priceStr] = lines[i].split(",");
     const price = parseFloat(priceStr);
     if (!date || !token || isNaN(price)) continue;
-    let dateMap = prices.get(token);
-    if (!dateMap) {
-      dateMap = new Map();
-      prices.set(token, dateMap);
-    }
-    dateMap.set(date, price);
+    getOrSet(prices, token, () => new Map()).set(date, price);
   }
   return prices;
 }
@@ -354,7 +255,6 @@ function savePricesCsv(
       rows.push({ date, token, symbol, price });
     }
   }
-  // Most recent dates first, sub-ordered by token symbol
   rows.sort(
     (a, b) => b.date.localeCompare(a.date) || a.symbol.localeCompare(b.symbol)
   );
@@ -383,61 +283,59 @@ async function main() {
 
   // 1. Fetch all pools from LpSugar.all (paginated)
   console.log("Fetching pools…");
+  const poolPages = await fetchAllPages<{
+    lp: Address;
+    symbol: string;
+    type: number;
+    token0: Address;
+    token1: Address;
+  }>(client, {
+    address: LP_SUGAR,
+    abi: lpSugarAbi,
+    functionName: "all",
+    extraArgs: [0n],
+  });
   const pools = new Map<string, PoolMeta>();
-  for (let offset = 0; ; offset += PAGE) {
-    const page = await client.readContract({
-      address: LP_SUGAR,
-      abi: lpSugarAbi,
-      functionName: "all",
-      args: [BigInt(PAGE), BigInt(offset), 0n],
+  for (const p of poolPages) {
+    pools.set(p.lp.toLowerCase(), {
+      symbol: p.symbol,
+      type: p.type,
+      token0: p.token0.toLowerCase(),
+      token1: p.token1.toLowerCase(),
     });
-    for (const p of page) {
-      pools.set(p.lp.toLowerCase(), {
-        symbol: p.symbol,
-        type: p.type,
-        token0: p.token0.toLowerCase(),
-        token1: p.token1.toLowerCase(),
-      });
-    }
-    console.log(`  offset=${offset} got=${page.length} total=${pools.size}`);
-    if (page.length < PAGE) break;
   }
+  console.log(`  ${pools.size} pools`);
 
   // 2. Fetch all tokens for fee/bribe symbol resolution
   console.log("Fetching tokens…");
+  const tokenPages = await fetchAllPages<{
+    token_address: Address;
+    symbol: string;
+    decimals: number;
+  }>(client, {
+    address: LP_SUGAR,
+    abi: lpSugarAbi,
+    functionName: "tokens",
+    extraArgs: [ZERO, []],
+  });
   const tokens = new Map<string, TokenMeta>();
-  for (let offset = 0; ; offset += PAGE) {
-    const page = await client.readContract({
-      address: LP_SUGAR,
-      abi: lpSugarAbi,
-      functionName: "tokens",
-      args: [BigInt(PAGE), BigInt(offset), ZERO, []],
+  for (const t of tokenPages) {
+    tokens.set(t.token_address.toLowerCase(), {
+      symbol: t.symbol,
+      decimals: t.decimals,
     });
-    for (const t of page) {
-      tokens.set(t.token_address.toLowerCase(), {
-        symbol: t.symbol,
-        decimals: t.decimals,
-      });
-    }
-    if (page.length < PAGE) break;
   }
   console.log(`  ${tokens.size} tokens`);
 
   // 3. Fetch latest epochs from RewardsSugar.epochsLatest (paginated)
   console.log("Fetching latest epochs…");
-  const latestEpochs: RawEpoch[] = [];
-  const totalPools = pools.size;
-  for (let offset = 0; offset < totalPools; offset += PAGE) {
-    const page = await client.readContract({
-      address: REWARDS_SUGAR,
-      abi: rewardsSugarAbi,
-      functionName: "epochsLatest",
-      args: [BigInt(PAGE), BigInt(offset)],
-    });
-    latestEpochs.push(...page);
-  }
+  const latestEpochs = await fetchAllPages<RawEpoch>(client, {
+    address: REWARDS_SUGAR,
+    abi: rewardsSugarAbi,
+    functionName: "epochsLatest",
+    totalItems: pools.size,
+  });
 
-  // Identify all pools that received any votes
   const votedPools = latestEpochs.filter((e) => e.votes > 0n);
   console.log(
     `  ${latestEpochs.length} epochs fetched, ${votedPools.length} pools with votes`
@@ -445,22 +343,16 @@ async function main() {
 
   // 4. Fetch ALL historical epochs for every voted pool
   console.log("Fetching historical epochs for all voted pools…");
-  // allEpochs: keyed by lp (lowercase) → array of raw epochs
   const allEpochs = new Map<string, RawEpoch[]>();
   for (const { lp } of votedPools) {
     const addr = lp.toLowerCase();
     if (allEpochs.has(addr)) continue;
-    const poolEpochs: RawEpoch[] = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await client.readContract({
-        address: REWARDS_SUGAR,
-        abi: rewardsSugarAbi,
-        functionName: "epochsByAddress",
-        args: [BigInt(PAGE), BigInt(offset), lp],
-      });
-      poolEpochs.push(...page);
-      if (page.length < PAGE) break;
-    }
+    const poolEpochs = await fetchAllPages<RawEpoch>(client, {
+      address: REWARDS_SUGAR,
+      abi: rewardsSugarAbi,
+      functionName: "epochsByAddress",
+      extraArgs: [lp],
+    });
     allEpochs.set(addr, poolEpochs);
     const pool = pools.get(addr);
     const label = pool ? poolName(pool, tokens) : lp;
@@ -471,13 +363,7 @@ async function main() {
   const byEpoch = new Map<number, { lp: string; ep: RawEpoch }[]>();
   for (const [lp, epochs] of allEpochs) {
     for (const ep of epochs) {
-      const ts = Number(ep.ts);
-      let bucket = byEpoch.get(ts);
-      if (!bucket) {
-        bucket = [];
-        byEpoch.set(ts, bucket);
-      }
-      bucket.push({ lp, ep });
+      getOrSet(byEpoch, Number(ep.ts), () => []).push({ lp, ep });
     }
   }
   const selectedEntries: { ts: number; lp: string; ep: RawEpoch }[] = [];
@@ -499,7 +385,7 @@ async function main() {
 
   // 5b. Fetch Voted events for the tracked address
   console.log(`Fetching voting history for ${voterAddress}…`);
-  const voterVotesByEpoch = new Map<number, Map<string, number>>(); // epoch_ts -> pool -> voter votes
+  const voterVotesByEpoch = new Map<number, Map<string, number>>();
   {
     const nowTs = Math.floor(Date.now() / 1000);
 
@@ -507,42 +393,33 @@ async function main() {
     const cachedEpochs = new Set<number>();
     if (existsSync("votes.csv")) {
       const lines = readFileSync("votes.csv", "utf-8").trimEnd().split("\n");
-      const header = lines[0].split(",");
-      const iDate = header.indexOf("epoch_date");
-      const iPool = header.indexOf("pool_address");
-      const iVoterVotes = header.indexOf("voter_votes");
-      const iVoterAddr = header.indexOf("voter_address");
-      if (iDate >= 0 && iPool >= 0 && iVoterVotes >= 0) {
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(",");
-          // Skip rows for a different voter address
-          if (cols[iVoterAddr] !== voterAddress) continue;
-          const epochDate = cols[iDate];
-          const pool = cols[iPool]?.toLowerCase();
-          const voterVotes = parseFloat(cols[iVoterVotes]);
-          if (!epochDate || !pool || isNaN(voterVotes)) continue;
-          const epochTs = Math.floor(
-            new Date(epochDate + "T00:00:00Z").getTime() / 1000
-          );
-          const isCompleted = epochTs + WEEK <= nowTs;
-          if (!isCompleted) continue;
-          let poolVotes = voterVotesByEpoch.get(epochTs);
-          if (!poolVotes) {
-            poolVotes = new Map();
-            voterVotesByEpoch.set(epochTs, poolVotes);
-          }
-          if (voterVotes > 0) poolVotes.set(pool, voterVotes);
-          cachedEpochs.add(epochTs);
-        }
-        console.log(
-          `  Loaded cached voter votes for ${cachedEpochs.size} completed epochs from votes.csv`
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",");
+        // CSV columns: epoch_number,epoch_date,pool_name,...,pool_address,voter_address
+        const epochDate = cols[1];
+        const pool = cols[17]?.toLowerCase();
+        const voterVotes = parseFloat(cols[6]);
+        const voterAddr = cols[18];
+        if (voterAddr !== voterAddress) continue;
+        if (!epochDate || !pool || isNaN(voterVotes)) continue;
+        const epochTs = Math.floor(
+          new Date(epochDate + "T00:00:00Z").getTime() / 1000
         );
+        if (epochTs + WEEK > nowTs) continue;
+        if (voterVotes > 0)
+          getOrSet(voterVotesByEpoch, epochTs, () => new Map()).set(
+            pool,
+            voterVotes
+          );
+        cachedEpochs.add(epochTs);
       }
+      console.log(
+        `  Loaded cached voter votes for ${cachedEpochs.size} completed epochs from votes.csv`
+      );
     }
 
     // Determine earliest uncached epoch to narrow the block scan range
-    const allEpochTimestamps = [...byEpoch.keys()];
-    const uncachedEpochs = allEpochTimestamps.filter(
+    const uncachedEpochs = [...byEpoch.keys()].filter(
       (ts) => !cachedEpochs.has(ts)
     );
 
@@ -557,10 +434,9 @@ async function main() {
       // Estimate start block from earliest uncached epoch (~2s/block on Base)
       const earliestUncachedTs = Math.min(...uncachedEpochs);
       const secsBack = Number(latestBlockData.timestamp) - earliestUncachedTs;
-      const blocksBack = BigInt(Math.ceil(secsBack / 2) + 50_000); // buffer
+      const blocksBack = BigInt(Math.ceil(secsBack / 2) + 50_000);
       const estimatedStart =
         latestBlock > blocksBack ? latestBlock - blocksBack : 0n;
-      // Never go below Voter contract deployment block
       const startBlock =
         estimatedStart > 3_022_926n ? estimatedStart : 3_022_926n;
 
@@ -600,13 +476,12 @@ async function main() {
             const weight = Number(log.args.weight!) / 1e18;
             const ts = Number(log.args.timestamp!);
             const epochTs = ts - (ts % WEEK);
-            // Skip events for epochs already loaded from cache
             if (cachedEpochs.has(epochTs)) continue;
-            let poolVotes = voterVotesByEpoch.get(epochTs);
-            if (!poolVotes) {
-              poolVotes = new Map();
-              voterVotesByEpoch.set(epochTs, poolVotes);
-            }
+            const poolVotes = getOrSet(
+              voterVotesByEpoch,
+              epochTs,
+              () => new Map()
+            );
             poolVotes.set(pool, (poolVotes.get(pool) ?? 0) + weight);
           }
           processed++;
@@ -680,9 +555,6 @@ async function main() {
     const epochStartTs = Number(ep.ts);
     const epochVoterVotes = voterVotesByEpoch.get(epochStartTs);
     const voterVotesForPool = epochVoterVotes?.get(lp) ?? 0;
-    const voterTotalForEpoch = epochVoterVotes
-      ? [...epochVoterVotes.values()].reduce((a, b) => a + b, 0)
-      : 0;
     entries.push({
       record: {
         epoch_ts: epochStartTs,
@@ -728,33 +600,26 @@ async function main() {
   if (alchemyKey) {
     const nowTs = Math.floor(Date.now() / 1000);
 
-    // Collect all needed (token, date) pairs and track which are for completed epochs
+    // Collect all needed (token, date) pairs
     const needed = new Map<
       string,
       { dates: Set<string>; completedDates: Set<string> }
     >();
+    const addNeeded = (token: string, date: string, isCompleted: boolean) => {
+      const entry = getOrSet(needed, token, () => ({
+        dates: new Set(),
+        completedDates: new Set(),
+      }));
+      entry.dates.add(date);
+      if (isCompleted) entry.completedDates.add(date);
+    };
+
     for (const { record, fees, bribes } of entries) {
       const isCompleted = record.epoch_ts + WEEK <= nowTs;
-      // Ensure AERO price is fetched for every epoch (needed for vote USD columns)
-      {
-        let aeroEntry = needed.get(AERO);
-        if (!aeroEntry) {
-          aeroEntry = { dates: new Set(), completedDates: new Set() };
-          needed.set(AERO, aeroEntry);
-        }
-        aeroEntry.dates.add(record.price_date);
-        if (isCompleted) aeroEntry.completedDates.add(record.price_date);
-      }
+      addNeeded(AERO, record.price_date, isCompleted);
       for (const r of [...fees, ...bribes]) {
         if (r.amount === 0n) continue;
-        const addr = r.token.toLowerCase();
-        let entry = needed.get(addr);
-        if (!entry) {
-          entry = { dates: new Set(), completedDates: new Set() };
-          needed.set(addr, entry);
-        }
-        entry.dates.add(record.price_date);
-        if (isCompleted) entry.completedDates.add(record.price_date);
+        addNeeded(r.token.toLowerCase(), record.price_date, isCompleted);
       }
     }
 
@@ -777,7 +642,6 @@ async function main() {
 
     console.log(`Fetching prices for ${tokenRanges.size} tokens…`);
 
-    // Fetch all missing prices in one pass
     const fetched =
       tokenRanges.size > 0
         ? await fetchHistoricalPrices(alchemyKey, tokenRanges, tokens)
@@ -795,27 +659,26 @@ async function main() {
         if (price === undefined) continue;
         merged.set(date, price);
         if (completedDates.has(date) && !cached?.has(date)) {
-          if (!cachedPrices.has(token)) cachedPrices.set(token, new Map());
-          cachedPrices.get(token)!.set(date, price);
+          getOrSet(cachedPrices, token, () => new Map()).set(date, price);
         }
       }
     }
 
     for (const { record, fees, bribes, pool_token0, pool_token1 } of entries) {
       record.fees_usd = computeUsd(fees, tokens, priceMap, record.price_date);
-      record.fees_token0_usd = computeUsdForToken(
+      record.fees_token0_usd = computeUsd(
         fees,
-        pool_token0,
         tokens,
         priceMap,
-        record.price_date
+        record.price_date,
+        pool_token0
       );
-      record.fees_token1_usd = computeUsdForToken(
+      record.fees_token1_usd = computeUsd(
         fees,
-        pool_token1,
         tokens,
         priceMap,
-        record.price_date
+        record.price_date,
+        pool_token1
       );
       record.bribes_usd = computeUsd(
         bribes,

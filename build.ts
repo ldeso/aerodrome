@@ -1,10 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
-// Parse CSV
-const text = readFileSync("votes.csv", "utf-8").trimEnd();
-const lines = text.split("\n");
-const header = lines[0].split(",");
-const idx = (name: string) => header.indexOf(name);
+// -- Type --
 
 type EpochRecord = {
   epoch_ts: number;
@@ -29,51 +25,7 @@ type EpochRecord = {
   voter_address: string;
 };
 
-const records: EpochRecord[] = [];
-for (let i = 1; i < lines.length; i++) {
-  const cols = lines[i].split(",");
-  const epochDate = cols[idx("epoch_date")];
-  const epochTs = Math.floor(
-    new Date(epochDate + "T00:00:00Z").getTime() / 1000
-  );
-  records.push({
-    epoch_ts: epochTs,
-    epoch_number: parseInt(cols[idx("epoch_number")]),
-    epoch_date: epochDate,
-    pool_name: cols[idx("pool_name")],
-    total_votes: parseFloat(cols[idx("total_votes")]),
-    pool_votes: parseFloat(cols[idx("pool_votes")]),
-    pool_votes_usd: parseFloat(cols[idx("pool_votes_usd")]),
-    voter_votes: parseFloat(cols[idx("voter_votes")]),
-    voter_votes_usd: parseFloat(cols[idx("voter_votes_usd")]),
-    fees_bribes_usd: parseFloat(cols[idx("fees_bribes_usd")]),
-    fees_usd: parseFloat(cols[idx("fees_usd")]),
-    bribes_usd: parseFloat(cols[idx("bribes_usd")]),
-    bribe_tokens: (cols[idx("bribe_tokens")] ?? "").split(";").filter(Boolean),
-    fees_token0_usd: parseFloat(cols[idx("fees_token0_usd")]),
-    token0: cols[idx("token0")],
-    fees_token1_usd: parseFloat(cols[idx("fees_token1_usd")]),
-    token1: cols[idx("token1")],
-    aero_usd: parseFloat(cols[idx("aero_usd")]),
-    pool_address: cols[idx("pool_address")],
-    voter_address: cols[idx("voter_address")] ?? "unknown",
-  });
-}
-
-records.sort((a, b) => b.epoch_ts - a.epoch_ts || b.pool_votes - a.pool_votes);
-
-const voterAddress = records[0]?.voter_address ?? "unknown";
-
-// Compute epoch totals and voter totals from the records
-const epochTotals = new Map<number, number>();
-const voterVotesByEpoch = new Map<number, number>();
-for (const r of records) {
-  epochTotals.set(r.epoch_ts, r.total_votes);
-  voterVotesByEpoch.set(
-    r.epoch_ts,
-    (voterVotesByEpoch.get(r.epoch_ts) ?? 0) + r.voter_votes
-  );
-}
+// -- Helpers --
 
 const escapeHtml = (s: string) =>
   s
@@ -90,18 +42,70 @@ const usdFmt = (n: number, digits: number = 0) => "$" + fmt(n, digits);
 const tagSpans = (arr: string[]) =>
   arr.map((s) => `<span>${escapeHtml(s)}</span>`).join("");
 
-// Group records by epoch
-const byEpochArr = new Map<number, EpochRecord[]>();
+// -- Main --
+
+// 1. Parse votes.csv
+const text = readFileSync("votes.csv", "utf-8").trimEnd();
+const lines = text.split("\n");
+const header = lines[0].split(",");
+const idx = (name: string) => header.indexOf(name);
+
+const records: EpochRecord[] = [];
+for (let i = 1; i < lines.length; i++) {
+  const c = lines[i].split(",");
+  const epochDate = c[idx("epoch_date")];
+  records.push({
+    epoch_ts: Math.floor(new Date(epochDate + "T00:00:00Z").getTime() / 1000),
+    epoch_number: parseInt(c[idx("epoch_number")]),
+    epoch_date: epochDate,
+    pool_name: c[idx("pool_name")],
+    total_votes: parseFloat(c[idx("total_votes")]),
+    pool_votes: parseFloat(c[idx("pool_votes")]),
+    pool_votes_usd: parseFloat(c[idx("pool_votes_usd")]),
+    voter_votes: parseFloat(c[idx("voter_votes")]),
+    voter_votes_usd: parseFloat(c[idx("voter_votes_usd")]),
+    fees_bribes_usd: parseFloat(c[idx("fees_bribes_usd")]),
+    fees_usd: parseFloat(c[idx("fees_usd")]),
+    bribes_usd: parseFloat(c[idx("bribes_usd")]),
+    bribe_tokens: (c[idx("bribe_tokens")] ?? "").split(";").filter(Boolean),
+    fees_token0_usd: parseFloat(c[idx("fees_token0_usd")]),
+    token0: c[idx("token0")],
+    fees_token1_usd: parseFloat(c[idx("fees_token1_usd")]),
+    token1: c[idx("token1")],
+    aero_usd: parseFloat(c[idx("aero_usd")]),
+    pool_address: c[idx("pool_address")],
+    voter_address: c[idx("voter_address")],
+  });
+}
+
+records.sort((a, b) => b.epoch_ts - a.epoch_ts || b.pool_votes - a.pool_votes);
+
+const voterAddress = records[0]?.voter_address ?? "unknown";
+
+// 2. Compute epoch totals and voter totals
+const epochTotals = new Map<number, number>();
+const voterVotesByEpoch = new Map<number, number>();
 for (const r of records) {
-  let arr = byEpochArr.get(r.epoch_ts);
+  epochTotals.set(r.epoch_ts, r.total_votes);
+  voterVotesByEpoch.set(
+    r.epoch_ts,
+    (voterVotesByEpoch.get(r.epoch_ts) ?? 0) + r.voter_votes
+  );
+}
+
+// 3. Group records by epoch
+const byEpoch = new Map<number, EpochRecord[]>();
+for (const r of records) {
+  let arr = byEpoch.get(r.epoch_ts);
   if (!arr) {
     arr = [];
-    byEpochArr.set(r.epoch_ts, arr);
+    byEpoch.set(r.epoch_ts, arr);
   }
   arr.push(r);
 }
-const sortedEpochs = [...byEpochArr.entries()].sort((a, b) => b[0] - a[0]);
+const sortedEpochs = [...byEpoch.entries()].sort((a, b) => b[0] - a[0]);
 
+// 4. Build HTML sections (one <details> per epoch)
 const sections: string[] = [];
 for (let i = 0; i < sortedEpochs.length; i++) {
   const [, epochRecords] = sortedEpochs[i];
@@ -194,6 +198,7 @@ for (let i = 0; i < sortedEpochs.length; i++) {
   </details>`);
 }
 
+// 5. Write index.html
 const html = `<!DOCTYPE html>
 <html lang="en">
 <head>

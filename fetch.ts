@@ -175,7 +175,8 @@ type EpochRecord = {
   pool_name: string;
   pool_address: string;
   total_votes: number;
-  total_vote_pct: number;
+  pool_votes: number;
+  pool_vote_pct: number;
   voter_votes: number;
   voter_vote_pct: number;
   fees_bribes_usd: number;
@@ -686,8 +687,9 @@ async function main() {
             : new Date((epochStartTs + WEEK) * 1000).toISOString().slice(0, 10),
         pool_name: poolName(pool, tokens),
         pool_address: ep.lp,
-        total_votes: Number(ep.votes) / 1e18,
-        total_vote_pct: 0,
+        total_votes: 0,
+        pool_votes: Number(ep.votes) / 1e18,
+        pool_vote_pct: 0,
         voter_votes: voterVotesForPool,
         voter_vote_pct:
           voterTotalForEpoch > 0
@@ -849,9 +851,10 @@ async function main() {
   console.log(`Computing vote percentages for ${epochTotals.size} epochs…`);
   for (const { record } of entries) {
     const total = epochTotals.get(record.epoch_ts) ?? 0;
-    record.total_vote_pct =
+    record.total_votes = total;
+    record.pool_vote_pct =
       total > 0
-        ? Math.round((record.total_votes / total) * 100 * 10000) / 10000
+        ? Math.round((record.pool_votes / total) * 100 * 10000) / 10000
         : 0;
   }
 
@@ -868,7 +871,7 @@ async function main() {
   }
 
   records.sort(
-    (a, b) => b.epoch_ts - a.epoch_ts || b.total_votes - a.total_votes
+    (a, b) => b.epoch_ts - a.epoch_ts || b.pool_votes - a.pool_votes
   );
 
   // 11. Write index.html (static, no JavaScript)
@@ -905,7 +908,7 @@ async function main() {
     const sections: string[] = [];
     for (let i = 0; i < sortedEpochs.length; i++) {
       const [, epochRecords] = sortedEpochs[i];
-      epochRecords.sort((a, b) => b.total_votes - a.total_votes);
+      epochRecords.sort((a, b) => b.pool_votes - a.pool_votes);
       const first = epochRecords[0];
 
       // Compute totals for the epoch
@@ -938,8 +941,8 @@ async function main() {
             `          <tr>
             <td>${j + 1}</td>
             <td>${escapeHtml(r.pool_name)}</td>
-            <td class="right">${fmt(r.total_votes)}</td>
-            <td class="right">${r.total_vote_pct.toFixed(2)}%</td>
+            <td class="right">${fmt(r.pool_votes)}</td>
+            <td class="right">${r.pool_vote_pct.toFixed(2)}%</td>
             <td class="right">${fmt(r.voter_votes)}</td>
             <td class="right">${r.voter_vote_pct.toFixed(2)}%</td>
             <td class="right">${usdFmt(r.fees_bribes_usd)}</td>
@@ -969,10 +972,10 @@ async function main() {
           <tr>
             <th>#</th>
             <th>Pool</th>
-            <th class="right">Total Votes</th>
-            <th class="right">Total Vote %</th>
-            <th class="right">Voter's Votes</th>
-            <th class="right">Voter's Vote %</th>
+            <th class="right">Pool Votes</th>
+            <th class="right">Pool Vote %</th>
+            <th class="right">Voter Votes</th>
+            <th class="right">Voter Vote %</th>
             <th class="right">Fees + Bribes (USD)</th>
             <th class="right">Fees (USD)</th>
             <th class="right">Bribes (USD)</th>
@@ -984,8 +987,8 @@ async function main() {
           </tr>
         </thead>
         <tbody>
-  ${totalRow}
   ${rows}
+  ${totalRow}
         </tbody>
       </table>
     </div>
@@ -1030,7 +1033,8 @@ ${sections.join("\n")}
     "epoch_date",
     "pool_name",
     "total_votes",
-    "total_vote_pct",
+    "pool_votes",
+    "pool_vote_pct",
     "voter_votes",
     "voter_vote_pct",
     "fees_bribes_usd",

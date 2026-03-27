@@ -389,7 +389,7 @@ async function main() {
     } records)`
   );
 
-  // 5b. Fetch Voted events for the tracked address
+  // 6. Fetch Voted events for the tracked address
   console.log(`Fetching voting history for ${voterAddress}…`);
   const voterVotesByEpoch = new Map<number, Map<string, number>>();
   {
@@ -402,7 +402,9 @@ async function main() {
       const header = lines[0].split(",");
       const idx = (name: string) => header.indexOf(name);
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",").map(v => v.replace(/^"(.*)"$/, "$1"));
+        const cols = lines[i]
+          .split(",")
+          .map((v) => v.replace(/^"(.*)"$/, "$1"));
         const epochDate = cols[idx("epoch_date")];
         const pool = cols[idx("pool_address")]?.toLowerCase();
         const voterVotes = parseFloat(cols[idx("voter_votes")]);
@@ -510,7 +512,7 @@ async function main() {
     );
   }
 
-  // 6. Resolve missing token symbols via Alchemy
+  // 7. Resolve missing token symbols via Alchemy
   if (alchemyKey) {
     const missingAddrs = new Set<string>();
     for (const { lp } of selectedEntries) {
@@ -548,7 +550,7 @@ async function main() {
     }
   }
 
-  // 7. Build entry records from selected per-epoch top 30
+  // 8. Build entry records from selected per-epoch top 30
   const entries: {
     record: EpochRecord;
     fees: RawReward;
@@ -605,7 +607,7 @@ async function main() {
     });
   }
 
-  // 8. Fetch token prices and compute USD values
+  // 9. Fetch token prices and compute USD values
   const cachedPrices = loadPricesCsv();
   const cachedPriceCount = [...cachedPrices.values()].reduce(
     (n, m) => n + m.size,
@@ -734,7 +736,7 @@ async function main() {
     console.log("ALCHEMY_API_KEY not set, skipping USD price computation");
   }
 
-  // 9. Compute vote percentages per epoch (using all fetched epoch data)
+  // 10. Compute vote percentages per epoch (using all fetched epoch data)
   const epochTotals = new Map<number, number>();
   for (const [, epochs] of allEpochs) {
     for (const ep of epochs) {
@@ -752,7 +754,7 @@ async function main() {
         : 0;
   }
 
-  // 10. Compute epoch numbers
+  // 11. Compute epoch numbers
   const records = entries.map((e) => e.record);
   const epochTimestamps = [...new Set(records.map((r) => r.epoch_ts))].sort(
     (a, b) => a - b
@@ -764,7 +766,7 @@ async function main() {
     }
   }
 
-  // 11. Classify pool types
+  // 12. Classify pool types
   {
     // Build map of token address -> earliest epoch timestamp
     const tokenFirstEpoch = new Map<string, number>();
@@ -817,7 +819,7 @@ async function main() {
     (a, b) => b.epoch_ts - a.epoch_ts || b.pool_votes - a.pool_votes
   );
 
-  // 12. Write votes.csv
+  // 13. Write votes.csv
   const fields = [
     "epoch_number",
     "epoch_date",

@@ -3,7 +3,7 @@ name: Update Voting Data
 on:
   push:
   schedule:
-    - cron: "0 6 * * 3-4" # Every Wednesday and Thursday at 06:00 UTC
+    - cron: "0 6 * * *" # Every day at 06:00 UTC
   workflow_dispatch:
 
 permissions:

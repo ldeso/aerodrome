@@ -154,13 +154,13 @@ for (let i = 0; i < sortedEpochs.length; i++) {
   const totalOpt10Votes = sum((r) => r.optimal10_votes);
   const totalOpt10Earn = sum((r) => r.optimal10_earnings_usd);
 
-  const currentNote =
+  const epochTiming =
     i === 0
-      ? ` (current epoch as of ${new Date()
+      ? `as of ${new Date()
           .toISOString()
           .replace("T", " ")
-          .replace(/:\d{2}\.\d+Z$/, " UTC")})`
-      : "";
+          .replace(/:\d{2}\.\d+Z$/, " UTC")}`
+      : `until ${sortedEpochs[i - 1][1][0].epoch_date} 00:00 UTC`;
 
   const summaryParts: string[] = [];
   if (trueActualVotes > 0) {
@@ -240,11 +240,12 @@ for (let i = 0; i < sortedEpochs.length; i++) {
     .join("\n");
 
   sections.push(`  <details${i < 2 ? " open" : ""}>
-    <summary>Epoch ${first.epoch_number} \u2014 ${
-    first.epoch_date
-  } \u2014 AERO ${usdFmt(first.aero_usd, 4)} \u2014 Earnings ${usdFmt(
-    totalActualEarn
-  )} \u2014 ${summaryParts.join(" \u00b7 ")}${currentNote}</summary>
+    <summary>Epoch ${first.epoch_number} ${epochTiming} \u2014 AERO ${usdFmt(
+    first.aero_usd,
+    4
+  )} \u2014 Earnings ${usdFmt(totalActualEarn)} \u2014 ${summaryParts.join(
+    " \u00b7 "
+  )}</summary>
     <div class="scroll">
       <table>
         <thead>

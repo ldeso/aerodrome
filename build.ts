@@ -162,19 +162,19 @@ for (let i = 0; i < sortedEpochs.length; i++) {
           .replace(/:\d{2}\.\d+Z$/, " UTC")})`
       : "";
 
-  const summaryParts = [`AERO ${usdFmt(first.aero_usd, 4)}`];
+  const summaryParts: string[] = [];
   if (trueActualVotes > 0) {
-    const relPct = (v: number) => {
-      if (totalActualEarn === 0) return "+0%";
-      const pct = ((v - totalActualEarn) / totalActualEarn) * 100;
-      const sign = pct >= 0 ? "+" : "\u2212";
-      return `${sign}${Math.abs(pct).toFixed(0)}%`;
+    const aprPct = (earn: number, votes: number) => {
+      const voteValueUsd = votes * first.aero_usd;
+      if (voteValueUsd === 0) return "APR 0%";
+      const apr = (((365 / 7) * earn) / voteValueUsd) * 100;
+      return `APR ${apr.toFixed(1)}%`;
     };
     summaryParts.push(
-      `Earnings ${usdFmt(totalActualEarn)}`,
-      `EqBC3 ${relPct(totalEqBc3Earn)}`,
-      `OptBC10 ${relPct(totalOptBc10Earn)}`,
-      `Opt10 ${relPct(totalOpt10Earn)}`
+      `Actual ${aprPct(totalActualEarn, trueActualVotes)}`,
+      `EqBC3 ${aprPct(totalEqBc3Earn, totalEqBc3Votes)}`,
+      `OptBC10 ${aprPct(totalOptBc10Earn, totalOptBc10Votes)}`,
+      `Opt10 ${aprPct(totalOpt10Earn, totalOpt10Votes)}`
     );
   }
 
@@ -240,9 +240,11 @@ for (let i = 0; i < sortedEpochs.length; i++) {
     .join("\n");
 
   sections.push(`  <details${i < 2 ? " open" : ""}>
-    <summary>Epoch ${first.epoch_number} \u2013 ${
+    <summary>Epoch ${first.epoch_number} \u2014 ${
     first.epoch_date
-  } \u2014 ${summaryParts.join(" \u00b7 ")}${currentNote}</summary>
+  } \u2014 AERO ${usdFmt(first.aero_usd, 4)} \u2014 Earnings ${usdFmt(
+    totalActualEarn
+  )} \u2014 ${summaryParts.join(" \u00b7 ")}${currentNote}</summary>
     <div class="scroll">
       <table>
         <thead>

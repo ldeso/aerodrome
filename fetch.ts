@@ -374,25 +374,199 @@ async function main() {
     `  ${latestEpochs.length} epochs fetched, ${votedPools.length} pools with votes`
   );
 
-  // 4. Fetch ALL historical epochs for every voted pool
-  console.log("Fetching historical epochs for all voted pools…");
+  // 4. Fetch Voted events for the tracked address
+  console.log(`Fetching voting history for ${voterAddress}…`);
+  const tokenVotesByEpoch = new Map<
+    number,
+    Map<string, { pool: string; weight: number; ts: number }[]>
+  >();
+  const voterVotesByEpoch = new Map<number, Map<string, number>>();
+  const nowTs = Math.floor(Date.now() / 1000);
+
+  // Load cached voter votes from votes.csv for completed epochs
+  const cachedEpochs = new Set<number>();
+  if (existsSync("votes.csv")) {
+    const lines = readFileSync("votes.csv", "utf-8").trimEnd().split("\n");
+    const header = lines[0].split(",");
+    const idx = (name: string) => header.indexOf(name);
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(",").map((v) => v.replace(/^"(.*)"$/, "$1"));
+      const epochDate = cols[idx("epoch_date")];
+      const pool = cols[idx("pool_address")]?.toLowerCase();
+      const voterVotes = parseFloat(cols[idx("actual_votes")]);
+      const voterAddr = cols[idx("voter_address")];
+      if (voterAddr !== voterAddress) continue;
+      if (!epochDate || !pool || isNaN(voterVotes)) continue;
+      const epochTs = Math.floor(
+        new Date(epochDate + "T00:00:00Z").getTime() / 1000
+      );
+      if (epochTs + WEEK > nowTs) continue;
+      if (voterVotes > 0)
+        getOrSet(voterVotesByEpoch, epochTs, () => new Map()).set(
+          pool,
+          voterVotes
+        );
+      cachedEpochs.add(epochTs);
+    }
+    console.log(
+      `  Loaded cached voter votes for ${cachedEpochs.size} completed epochs from votes.csv`
+    );
+  }
+
+  // Determine scan range from cached data
+  const latestCachedTs = cachedEpochs.size > 0 ? Math.max(...cachedEpochs) : 0;
+  const earliestUncachedTs = latestCachedTs > 0 ? latestCachedTs + WEEK : 0;
+
+  if (earliestUncachedTs <= nowTs) {
+    const BLOCK_CHUNK = 10_000n;
+    const BATCH_CONCURRENCY = 10;
+    const latestBlock = await client.getBlockNumber();
+    const latestBlockData = await client.getBlock({
+      blockNumber: latestBlock,
+    });
+
+    const secsBack = Number(latestBlockData.timestamp) - earliestUncachedTs;
+    const blocksBack = BigInt(Math.ceil(secsBack / 2) + 50_000);
+    const estimatedStart =
+      latestBlock > blocksBack ? latestBlock - blocksBack : 0n;
+    const startBlock =
+      estimatedStart > 3_022_926n ? estimatedStart : 3_022_926n;
+
+    const totalChunks = Number((latestBlock - startBlock) / BLOCK_CHUNK) + 1;
+    let processed = 0;
+    console.log(
+      `  Scanning blocks ${startBlock}–${latestBlock} (${totalChunks} chunks)…`
+    );
+
+    for (
+      let batchStart = startBlock;
+      batchStart <= latestBlock;
+      batchStart += BLOCK_CHUNK * BigInt(BATCH_CONCURRENCY)
+    ) {
+      const batch: Promise<any[]>[] = [];
+      for (let i = 0; i < BATCH_CONCURRENCY; i++) {
+        const from = batchStart + BLOCK_CHUNK * BigInt(i);
+        if (from > latestBlock) break;
+        const to =
+          from + BLOCK_CHUNK - 1n > latestBlock
+            ? latestBlock
+            : from + BLOCK_CHUNK - 1n;
+        batch.push(
+          withRetry(
+            () =>
+              client.getLogs({
+                address: VOTER,
+                event: votedEvent,
+                args: { voter: voterAddress },
+                fromBlock: from,
+                toBlock: to,
+              }),
+            `getLogs ${from}–${to}`
+          )
+        );
+      }
+      const results = await Promise.all(batch);
+      for (const logs of results) {
+        for (const log of logs) {
+          const pool = log.args.pool!.toLowerCase();
+          const tokenId = String(log.args.tokenId!);
+          const weight = Number(log.args.weight!) / 1e18;
+          const ts = Number(log.args.timestamp!);
+          const epochTs = ts - (ts % WEEK);
+          if (cachedEpochs.has(epochTs)) continue;
+          const byTokenId = getOrSet(
+            tokenVotesByEpoch,
+            epochTs,
+            () => new Map()
+          );
+          const events = getOrSet(byTokenId, tokenId, () => []);
+          events.push({ pool, weight, ts });
+        }
+        processed++;
+      }
+      if (processed % 200 === 0) {
+        console.log(`  ${processed}/${totalChunks} chunks scanned…`);
+      }
+    }
+  } else {
+    console.log("  All epochs cached, skipping block scan");
+  }
+
+  // Filter out tokenIds not owned by the voter
+  const veAddress = await client.readContract({
+    address: VOTER,
+    abi: voterAbi,
+    functionName: "ve",
+  });
+  const allTokenIds = new Set<string>();
+  for (const byTokenId of tokenVotesByEpoch.values()) {
+    for (const tokenId of byTokenId.keys()) allTokenIds.add(tokenId);
+  }
+  const ownedTokenIds = new Set<string>();
+  for (const tokenId of allTokenIds) {
+    const owner = (
+      await client.readContract({
+        address: veAddress,
+        abi: veAbi,
+        functionName: "ownerOf",
+        args: [BigInt(tokenId)],
+      })
+    ).toLowerCase();
+    if (owner === voterAddress || owner === ZERO) ownedTokenIds.add(tokenId);
+  }
+  console.log(
+    `  ${ownedTokenIds.size}/${allTokenIds.size} tokenIds owned by voter: ${[
+      ...ownedTokenIds,
+    ].join(", ")}`
+  );
+
+  // Aggregate by (epoch, tokenId), keep only events from the latest timestamp
+  const tokenVotes = new Map<string, Map<number, Map<string, number>>>();
+  for (const [epochTs, byTokenId] of tokenVotesByEpoch) {
+    for (const [tokenId, events] of byTokenId) {
+      if (!ownedTokenIds.has(tokenId)) continue;
+      const maxTs = Math.max(...events.map((e) => e.ts));
+      const poolWeights = new Map<string, number>();
+      for (const e of events) {
+        if (e.ts !== maxTs) continue;
+        poolWeights.set(e.pool, (poolWeights.get(e.pool) ?? 0) + e.weight);
+      }
+      getOrSet(tokenVotes, tokenId, () => new Map()).set(epochTs, poolWeights);
+    }
+  }
+  console.log(`  ${tokenVotes.size} tokenIds with vote data`);
+
+  // Collect all pools the voter voted for
+  const voterPoolAddrs = new Set<string>();
+  for (const [, epochMap] of tokenVotes) {
+    for (const [, poolWeights] of epochMap) {
+      for (const pool of poolWeights.keys()) voterPoolAddrs.add(pool);
+    }
+  }
+  for (const [, poolMap] of voterVotesByEpoch) {
+    for (const pool of poolMap.keys()) voterPoolAddrs.add(pool);
+  }
+
+  // 5. Fetch ALL historical epochs for every voted pool + voter-voted pool
+  const poolsToFetch = new Set(votedPools.map((e) => e.lp.toLowerCase()));
+  for (const addr of voterPoolAddrs) poolsToFetch.add(addr);
+  console.log(`Fetching historical epochs for ${poolsToFetch.size} pools…`);
   const allEpochs = new Map<string, RawEpoch[]>();
-  for (const { lp } of votedPools) {
-    const addr = lp.toLowerCase();
+  for (const addr of poolsToFetch) {
     if (allEpochs.has(addr)) continue;
     const poolEpochs = await fetchAllPages<RawEpoch>(client, {
       address: REWARDS_SUGAR,
       abi: rewardsSugarAbi,
       functionName: "epochsByAddress",
-      extraArgs: [lp],
+      extraArgs: [addr as Address],
     });
     allEpochs.set(addr, poolEpochs);
     const pool = pools.get(addr);
-    const label = pool ? poolName(pool, tokens) : lp;
+    const label = pool ? poolName(pool, tokens) : addr;
     console.log(`  ${label}: ${poolEpochs.length} epochs`);
   }
 
-  // 5. Group by epoch timestamp
+  // 6. Group by epoch timestamp
   const byEpoch = new Map<number, { lp: string; ep: RawEpoch }[]>();
   for (const [lp, epochs] of allEpochs) {
     for (const ep of epochs) {
@@ -400,224 +574,49 @@ async function main() {
     }
   }
 
-  // 6. Fetch Voted events for the tracked address
-  console.log(`Fetching voting history for ${voterAddress}…`);
-  const tokenVotesByEpoch = new Map<
-    number,
-    Map<string, { pool: string; weight: number; ts: number }[]>
-  >();
-  const voterVotesByEpoch = new Map<number, Map<string, number>>();
+  // Carry-forward per-tokenId votes across gap epochs and aggregate
   {
-    const nowTs = Math.floor(Date.now() / 1000);
+    const allEpochTimestamps = [...byEpoch.keys()].sort((a, b) => a - b);
+    let totalCarried = 0;
+    for (const [, epochMap] of tokenVotes) {
+      const votedEpochs = [...epochMap.keys()].sort((a, b) => a - b);
+      if (votedEpochs.length === 0) continue;
+      const firstVote = votedEpochs[0];
+      const lastVote = votedEpochs[votedEpochs.length - 1];
+      let lastPoolWeights: Map<string, number> | undefined;
+      for (const ts of allEpochTimestamps) {
+        if (ts < firstVote || ts > lastVote) continue;
+        const existing = epochMap.get(ts);
+        if (existing) {
+          lastPoolWeights = existing;
+        } else if (lastPoolWeights) {
+          epochMap.set(ts, new Map(lastPoolWeights));
+          totalCarried++;
+        }
+      }
+    }
 
-    // Load cached voter votes from votes.csv for completed epochs
-    const cachedEpochs = new Set<number>();
-    if (existsSync("votes.csv")) {
-      const lines = readFileSync("votes.csv", "utf-8").trimEnd().split("\n");
-      const header = lines[0].split(",");
-      const idx = (name: string) => header.indexOf(name);
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i]
-          .split(",")
-          .map((v) => v.replace(/^"(.*)"$/, "$1"));
-        const epochDate = cols[idx("epoch_date")];
-        const pool = cols[idx("pool_address")]?.toLowerCase();
-        const voterVotes = parseFloat(cols[idx("actual_votes")]);
-        const voterAddr = cols[idx("voter_address")];
-        if (voterAddr !== voterAddress) continue;
-        if (!epochDate || !pool || isNaN(voterVotes)) continue;
-        const epochTs = Math.floor(
-          new Date(epochDate + "T00:00:00Z").getTime() / 1000
+    for (const [, epochMap] of tokenVotes) {
+      for (const [epochTs, poolWeights] of epochMap) {
+        const poolTotals = getOrSet(
+          voterVotesByEpoch,
+          epochTs,
+          () => new Map()
         );
-        if (epochTs + WEEK > nowTs) continue;
-        if (voterVotes > 0)
-          getOrSet(voterVotesByEpoch, epochTs, () => new Map()).set(
-            pool,
-            voterVotes
-          );
-        cachedEpochs.add(epochTs);
-      }
-      console.log(
-        `  Loaded cached voter votes for ${cachedEpochs.size} completed epochs from votes.csv`
-      );
-    }
-
-    // Determine earliest uncached epoch to narrow the block scan range
-    const uncachedEpochs = [...byEpoch.keys()].filter(
-      (ts) => !cachedEpochs.has(ts)
-    );
-
-    if (uncachedEpochs.length > 0) {
-      const BLOCK_CHUNK = 10_000n;
-      const BATCH_CONCURRENCY = 10;
-      const latestBlock = await client.getBlockNumber();
-      const latestBlockData = await client.getBlock({
-        blockNumber: latestBlock,
-      });
-
-      // Estimate start block from earliest uncached epoch (~2s/block on Base)
-      const earliestUncachedTs = Math.min(...uncachedEpochs);
-      const secsBack = Number(latestBlockData.timestamp) - earliestUncachedTs;
-      const blocksBack = BigInt(Math.ceil(secsBack / 2) + 50_000);
-      const estimatedStart =
-        latestBlock > blocksBack ? latestBlock - blocksBack : 0n;
-      const startBlock =
-        estimatedStart > 3_022_926n ? estimatedStart : 3_022_926n;
-
-      const totalChunks = Number((latestBlock - startBlock) / BLOCK_CHUNK) + 1;
-      let processed = 0;
-      console.log(
-        `  ${uncachedEpochs.length} uncached epochs, scanning blocks ${startBlock}–${latestBlock} (${totalChunks} chunks)…`
-      );
-
-      for (
-        let batchStart = startBlock;
-        batchStart <= latestBlock;
-        batchStart += BLOCK_CHUNK * BigInt(BATCH_CONCURRENCY)
-      ) {
-        const batch: Promise<any[]>[] = [];
-        for (let i = 0; i < BATCH_CONCURRENCY; i++) {
-          const from = batchStart + BLOCK_CHUNK * BigInt(i);
-          if (from > latestBlock) break;
-          const to =
-            from + BLOCK_CHUNK - 1n > latestBlock
-              ? latestBlock
-              : from + BLOCK_CHUNK - 1n;
-          batch.push(
-            withRetry(
-              () =>
-                client.getLogs({
-                  address: VOTER,
-                  event: votedEvent,
-                  args: { voter: voterAddress },
-                  fromBlock: from,
-                  toBlock: to,
-                }),
-              `getLogs ${from}–${to}`
-            )
-          );
-        }
-        const results = await Promise.all(batch);
-        for (const logs of results) {
-          for (const log of logs) {
-            const pool = log.args.pool!.toLowerCase();
-            const tokenId = String(log.args.tokenId!);
-            const weight = Number(log.args.weight!) / 1e18;
-            const ts = Number(log.args.timestamp!);
-            const epochTs = ts - (ts % WEEK);
-            if (cachedEpochs.has(epochTs)) continue;
-            const byTokenId = getOrSet(
-              tokenVotesByEpoch,
-              epochTs,
-              () => new Map()
-            );
-            const events = getOrSet(byTokenId, tokenId, () => []);
-            events.push({ pool, weight, ts });
-          }
-          processed++;
-        }
-        if (processed % 200 === 0) {
-          console.log(`  ${processed}/${totalChunks} chunks scanned…`);
-        }
-      }
-    } else {
-      console.log("  All epochs cached, skipping block scan");
-    }
-
-    // Discard tokenIds not owned by the voter or by the zero address
-    const veAddress = await client.readContract({
-      address: VOTER,
-      abi: voterAbi,
-      functionName: "ve",
-    });
-    const allTokenIds = new Set<string>();
-    for (const byTokenId of tokenVotesByEpoch.values()) {
-      for (const tokenId of byTokenId.keys()) allTokenIds.add(tokenId);
-    }
-    const ownedTokenIds = new Set<string>();
-    for (const tokenId of allTokenIds) {
-      const owner = (
-        await client.readContract({
-          address: veAddress,
-          abi: veAbi,
-          functionName: "ownerOf",
-          args: [BigInt(tokenId)],
-        })
-      ).toLowerCase();
-      if (owner === voterAddress || owner === ZERO) ownedTokenIds.add(tokenId);
-    }
-    console.log(
-      `  ${ownedTokenIds.size}/${allTokenIds.size} tokenIds owned by voter: ${[
-        ...ownedTokenIds,
-      ].join(", ")}`
-    );
-
-    // Aggregate by (epoch, tokenId), keep only events from the latest timestamp
-    // then carry forward per-tokenId
-    {
-      // Step 1: Build per-tokenId, per-epoch pool→weight maps from events
-      const tokenVotes = new Map<string, Map<number, Map<string, number>>>(); // tokenId -> (epochTs -> (pool -> weight))
-      for (const [epochTs, byTokenId] of tokenVotesByEpoch) {
-        for (const [tokenId, events] of byTokenId) {
-          if (!ownedTokenIds.has(tokenId)) continue;
-          const maxTs = Math.max(...events.map((e) => e.ts));
-          const poolWeights = new Map<string, number>();
-          for (const e of events) {
-            if (e.ts !== maxTs) continue;
-            poolWeights.set(e.pool, (poolWeights.get(e.pool) ?? 0) + e.weight);
-          }
-          getOrSet(tokenVotes, tokenId, () => new Map()).set(
-            epochTs,
-            poolWeights
-          );
-        }
-      }
-      console.log(`  ${tokenVotes.size} tokenIds with vote data`);
-
-      // Step 2: Per-tokenId carry-forward across gap epochs
-      const allEpochTimestamps = [...byEpoch.keys()].sort((a, b) => a - b);
-      let totalCarried = 0;
-      for (const [, epochMap] of tokenVotes) {
-        const votedEpochs = [...epochMap.keys()].sort((a, b) => a - b);
-        if (votedEpochs.length === 0) continue;
-        const firstVote = votedEpochs[0];
-        const lastVote = votedEpochs[votedEpochs.length - 1];
-        let lastPoolWeights: Map<string, number> | undefined;
-        for (const ts of allEpochTimestamps) {
-          if (ts < firstVote || ts > lastVote) continue;
-          const existing = epochMap.get(ts);
-          if (existing) {
-            lastPoolWeights = existing;
-          } else if (lastPoolWeights) {
-            epochMap.set(ts, new Map(lastPoolWeights));
-            totalCarried++;
-          }
-        }
-      }
-
-      // Step 3: Aggregate across all tokenIds into voterVotesByEpoch
-      for (const [, epochMap] of tokenVotes) {
-        for (const [epochTs, poolWeights] of epochMap) {
-          const poolTotals = getOrSet(
-            voterVotesByEpoch,
-            epochTs,
-            () => new Map()
-          );
-          for (const [pool, weight] of poolWeights) {
-            poolTotals.set(pool, (poolTotals.get(pool) ?? 0) + weight);
-          }
+        for (const [pool, weight] of poolWeights) {
+          poolTotals.set(pool, (poolTotals.get(pool) ?? 0) + weight);
         }
       }
     }
-
-    const totalVoterVotes = [...voterVotesByEpoch.values()].reduce(
-      (n, m) => n + m.size,
-      0
-    );
-    console.log(
-      `  ${totalVoterVotes} pool-vote entries across ${voterVotesByEpoch.size} epochs`
-    );
   }
+
+  const totalVoterVotes = [...voterVotesByEpoch.values()].reduce(
+    (n, m) => n + m.size,
+    0
+  );
+  console.log(
+    `  ${totalVoterVotes} pool-vote entries across ${voterVotesByEpoch.size} epochs`
+  );
 
   // 7. Keep top 30 pools per epoch by votes, plus all pools the voter voted for
   const selectedEntries: { ts: number; lp: string; ep: RawEpoch }[] = [];
@@ -764,8 +763,6 @@ async function main() {
   console.log(`Loaded ${cachedPriceCount} cached prices from prices.csv`);
 
   if (alchemyKey) {
-    const nowTs = Math.floor(Date.now() / 1000);
-
     // Collect all needed (token, date) pairs
     const needed = new Map<
       string,

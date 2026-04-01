@@ -578,6 +578,7 @@ async function main() {
   {
     const allEpochTimestamps = [...byEpoch.keys()].sort((a, b) => a - b);
     const currentEpochTs = nowTs - (nowTs % WEEK);
+    const lastCompletedEpoch = currentEpochTs - WEEK;
     let totalCarried = 0;
     for (const [tokenId, epochMap] of tokenVotes) {
       const votedEpochs = [...epochMap.keys()].sort((a, b) => a - b);
@@ -597,7 +598,6 @@ async function main() {
       }
       // For owned tokens, carry forward to the current epoch only if votes
       // were active in the last completed epoch (ensuring continuity).
-      const lastCompletedEpoch = currentEpochTs - WEEK;
       if (
         lastPoolWeights &&
         ownedTokenIds.has(tokenId) &&

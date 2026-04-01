@@ -279,7 +279,10 @@ function buildSvg(data: EpochSummary[], id: string): string {
     .map((v) => {
       const kVal = v / 1000;
       const kStr = kVal % 1 === 0 ? kVal.toFixed(0) : kVal.toFixed(1);
-      const label = v === 0 ? "0" : `${kStr}k / ${kStr}%`;
+      const label =
+        v === 0
+          ? "0"
+          : `<tspan class="earn-lines">${kStr}k</tspan><tspan opacity="0.3"> / </tspan><tspan class="apr-lines">${kStr}%</tspan>`;
       return `<text x="${ml - 6}" y="${yE(v).toFixed(
         1
       )}" text-anchor="end" dominant-baseline="middle" fill="#555" font-size="14">${label}</text>`;

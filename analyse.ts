@@ -7,8 +7,8 @@ type PoolRecord = {
   epoch_date: string;
   pool_name: string;
   pool_type: string;
-  total_votes: number;
   pool_votes: number;
+  pool_votes_total: number;
   pool_vote_pct: number;
   fees_bribes_usd: number;
   fees_usd: number;
@@ -22,6 +22,7 @@ type PoolRecord = {
   pool_address: string;
   voter_address: string;
   actual_votes: number;
+  actual_votes_total: number;
   actual_vote_pct: number;
 };
 
@@ -49,8 +50,8 @@ function parseRecords(header: string[], rows: string[][]): PoolRecord[] {
     epoch_date: c[idx("epoch_date")],
     pool_name: c[idx("pool_name")],
     pool_type: c[idx("pool_type")],
-    total_votes: parseFloat(c[idx("total_votes")]),
     pool_votes: parseFloat(c[idx("pool_votes")]),
+    pool_votes_total: parseFloat(c[idx("pool_votes_total")]),
     pool_vote_pct: parseFloat(c[idx("pool_vote_pct")]),
     fees_bribes_usd: parseFloat(c[idx("fees_bribes_usd")]),
     fees_usd: parseFloat(c[idx("fees_usd")]),
@@ -64,6 +65,7 @@ function parseRecords(header: string[], rows: string[][]): PoolRecord[] {
     pool_address: c[idx("pool_address")],
     voter_address: c[idx("voter_address")],
     actual_votes: parseFloat(c[idx("actual_votes")]),
+    actual_votes_total: parseFloat(c[idx("actual_votes_total")]),
     actual_vote_pct: parseFloat(c[idx("actual_vote_pct")]),
   }));
 }
@@ -173,7 +175,7 @@ for (const r of records) {
   );
 }
 
-// Strategy results per row: [actual, equalBC3, optimalBC10, optimal10]
+// Strategy results per row: [actual, eqBC3, opt10BC, opt10]
 const strategies: Strategy[][] = records.map(() => [
   { votes: 0, earnings: 0 },
   { votes: 0, earnings: 0 },
@@ -205,12 +207,12 @@ for (const [epochNum, entries] of byEpoch) {
     .slice(0, 3)
     .map((x) => x.j);
 
-  const equalBcVotes = pools.map(() => 0);
+  const eqBc3Votes = pools.map(() => 0);
   if (bluechipIndices.length > 0 && voterTotal > 0) {
     const perPool = voterTotal / bluechipIndices.length;
-    for (const j of bluechipIndices) equalBcVotes[j] = perPool;
+    for (const j of bluechipIndices) eqBc3Votes[j] = perPool;
   }
-  const equalBcEarnings = computeEarnings(pools, equalBcVotes);
+  const eqBc3Earnings = computeEarnings(pools, eqBc3Votes);
 
   // 3. Optimal bluechip (up to 10 pools)
   const allBluechipIndices = entries
@@ -220,11 +222,11 @@ for (const [epochNum, entries] of byEpoch) {
 
   const bcPools: Pool[] = allBluechipIndices.map((j) => pools[j]);
   const bcOpt = waterFill(bcPools, voterTotal, 10);
-  const optBcVotes = pools.map(() => 0);
+  const opt10BcVotes = pools.map(() => 0);
   for (let k = 0; k < allBluechipIndices.length; k++) {
-    optBcVotes[allBluechipIndices[k]] = bcOpt[k];
+    opt10BcVotes[allBluechipIndices[k]] = bcOpt[k];
   }
-  const optBcEarnings = computeEarnings(pools, optBcVotes);
+  const opt10BcEarnings = computeEarnings(pools, opt10BcVotes);
 
   // 4. Optimal any (up to 10 pools)
   const opt10Votes = waterFill(pools, voterTotal, 10);
@@ -234,8 +236,8 @@ for (const [epochNum, entries] of byEpoch) {
     const idx = entries[j].rowIdx;
     strategies[idx] = [
       { votes: actualVotes[j], earnings: actualEarnings[j] },
-      { votes: equalBcVotes[j], earnings: equalBcEarnings[j] },
-      { votes: optBcVotes[j], earnings: optBcEarnings[j] },
+      { votes: eqBc3Votes[j], earnings: eqBc3Earnings[j] },
+      { votes: opt10BcVotes[j], earnings: opt10BcEarnings[j] },
       { votes: opt10Votes[j], earnings: opt10Earnings[j] },
     ];
   }
@@ -247,15 +249,15 @@ const analysisFields = [
   "actual_votes",
   "actual_vote_pct",
   "actual_earnings_usd",
-  "equal_bc3_votes",
-  "equal_bc3_vote_pct",
-  "equal_bc3_earnings_usd",
-  "optimal_bc10_votes",
-  "optimal_bc10_vote_pct",
-  "optimal_bc10_earnings_usd",
-  "optimal10_votes",
-  "optimal10_vote_pct",
-  "optimal10_earnings_usd",
+  "eq_bc3_votes",
+  "eq_bc3_vote_pct",
+  "eq_bc3_earnings_usd",
+  "opt_10bc_votes",
+  "opt_10bc_vote_pct",
+  "opt_10bc_earnings_usd",
+  "opt_10_votes",
+  "opt_10_vote_pct",
+  "opt_10_earnings_usd",
 ];
 
 const analysisSet = new Set(analysisFields);
@@ -284,20 +286,20 @@ for (let i = 0; i < rows.length; i++) {
 
   const r = records[i];
   const voterTotal = voterTotalByEpoch.get(r.epoch_number) ?? 0;
-  const [actual, equalBc3, optBc10, optimal10] = strategies[i];
+  const [actual, eqBc3, opt10Bc, opt10] = strategies[i];
   const analysisValues = [
     round(actual.votes),
     round(votePct(actual.votes, voterTotal), 4),
     round(actual.earnings),
-    round(equalBc3.votes),
-    round(votePct(equalBc3.votes, voterTotal), 4),
-    round(equalBc3.earnings),
-    round(optBc10.votes),
-    round(votePct(optBc10.votes, voterTotal), 4),
-    round(optBc10.earnings),
-    round(optimal10.votes),
-    round(votePct(optimal10.votes, voterTotal), 4),
-    round(optimal10.earnings),
+    round(eqBc3.votes),
+    round(votePct(eqBc3.votes, voterTotal), 4),
+    round(eqBc3.earnings),
+    round(opt10Bc.votes),
+    round(votePct(opt10Bc.votes, voterTotal), 4),
+    round(opt10Bc.earnings),
+    round(opt10.votes),
+    round(votePct(opt10.votes, voterTotal), 4),
+    round(opt10.earnings),
   ];
 
   outLines.push([...baseValues, ...analysisValues].join(","));
@@ -308,18 +310,18 @@ writeFileSync("votes.csv", outLines.join("\n") + "\n");
 // -- Summary --
 
 let totalActual = 0;
-let totalEqualBc3 = 0;
-let totalOptBc10 = 0;
+let totalEqBc3 = 0;
+let totalOpt10Bc = 0;
 let totalOpt10 = 0;
-for (const [actual, ebc5, obc10, o10] of strategies) {
+for (const [actual, ebc3, o10bc, o10] of strategies) {
   totalActual += actual.earnings;
-  totalEqualBc3 += ebc5.earnings;
-  totalOptBc10 += obc10.earnings;
+  totalEqBc3 += ebc3.earnings;
+  totalOpt10Bc += o10bc.earnings;
   totalOpt10 += o10.earnings;
 }
 
 console.log("Voting analysis complete:");
 console.log(`  Actual earnings:       $${round(totalActual)}`);
-console.log(`  Equal BC top-3:        $${round(totalEqualBc3)}`);
-console.log(`  Optimal BC (10 pools): $${round(totalOptBc10)}`);
+console.log(`  Equal BC top-3:        $${round(totalEqBc3)}`);
+console.log(`  Optimal BC (10 pools): $${round(totalOpt10Bc)}`);
 console.log(`  Optimal (10 pools):    $${round(totalOpt10)}`);

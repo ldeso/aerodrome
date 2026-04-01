@@ -27,7 +27,7 @@ Reads `votes.csv` and computes hypothetical voting strategies for each epoch:
 
 - **Actual** — the voter's real earnings based on their votes.
 - **EqBC3** — equal votes across the top 3 blue-chip pools.
-- **OptBC10** — optimal votes across 10 blue-chip pools.
+- **Opt10BC** — optimal votes across 10 blue-chip pools.
 - **Opt10** — optimal votes across any 10 pools.
 
 Optimal votes are computed via water-filling (min-max Lagrangian optimization)

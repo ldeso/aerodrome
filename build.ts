@@ -52,6 +52,11 @@ const fmt = (n: number, digits: number = 0) =>
   });
 const usdFmt = (n: number, digits: number = 0) => "$" + fmt(n, digits);
 
+const apr = (earn: number, votes: number, aeroUsd: number) => {
+  const val = votes * aeroUsd;
+  return val > 0 ? (((365 / 7) * earn) / val) * 100 : 0;
+};
+
 const poolTypeLabel: Record<string, string> = {
   bluechip: "blue chip",
   stablecoin: "stable",
@@ -164,11 +169,6 @@ for (const [ts, epochRecords] of byEpoch) {
   const opt10BcVotes = sum((r) => r.opt_10bc_votes);
   const opt10Votes = sum((r) => r.opt_10_votes);
 
-  const apr = (earn: number, votes: number) => {
-    const val = votes * first.aero_usd;
-    return val > 0 ? (((365 / 7) * earn) / val) * 100 : 0;
-  };
-
   epochSummaries.push({
     date: first.epoch_date,
     epochNum: first.epoch_number,
@@ -177,10 +177,10 @@ for (const [ts, epochRecords] of byEpoch) {
     eqBc3Earn,
     opt10BcEarn,
     opt10Earn,
-    actualApr: apr(actualEarn, trueActualVotes),
-    eqBc3Apr: apr(eqBc3Earn, eqBc3Votes),
-    opt10BcApr: apr(opt10BcEarn, opt10BcVotes),
-    opt10Apr: apr(opt10Earn, opt10Votes),
+    actualApr: apr(actualEarn, trueActualVotes, first.aero_usd),
+    eqBc3Apr: apr(eqBc3Earn, eqBc3Votes, first.aero_usd),
+    opt10BcApr: apr(opt10BcEarn, opt10BcVotes, first.aero_usd),
+    opt10Apr: apr(opt10Earn, opt10Votes, first.aero_usd),
   });
 }
 epochSummaries.sort(
@@ -510,6 +510,9 @@ for (let i = 0; i < sortedEpochs.length; i++) {
   const sum = (fn: (r: EpochRecord) => number) =>
     epochRecords.reduce((s, r) => s + fn(r), 0);
 
+  const totalPoolVotes = sum((r) => r.pool_votes);
+  const totalPoolFeesBribes = sum((r) => r.fees_bribes_usd);
+  const totalPoolApr = apr(totalPoolFeesBribes, totalPoolVotes, first.aero_usd);
   const totalActualEarn = sum((r) => r.actual_earnings_usd);
   const totalEqBc3Votes = sum((r) => r.eq_bc3_votes);
   const totalEqBc3Earn = sum((r) => r.eq_bc3_earnings_usd);
@@ -517,6 +520,15 @@ for (let i = 0; i < sortedEpochs.length; i++) {
   const totalOpt10BcEarn = sum((r) => r.opt_10bc_earnings_usd);
   const totalOpt10Votes = sum((r) => r.opt_10_votes);
   const totalOpt10Earn = sum((r) => r.opt_10_earnings_usd);
+
+  const totalActualApr = apr(totalActualEarn, trueActualVotes, first.aero_usd);
+  const totalEqBc3Apr = apr(totalEqBc3Earn, totalEqBc3Votes, first.aero_usd);
+  const totalOpt10BcApr = apr(
+    totalOpt10BcEarn,
+    totalOpt10BcVotes,
+    first.aero_usd
+  );
+  const totalOpt10Apr = apr(totalOpt10Earn, totalOpt10Votes, first.aero_usd);
 
   const epochTiming =
     i === 0
@@ -528,25 +540,25 @@ for (let i = 0; i < sortedEpochs.length; i++) {
 
   const totalRow = `          <tr class="total">
             <td></td>
-            <td>TOTAL</td>
+            <td>Total Votes / APR / Earnings</td>
             <td></td>
             <td class="right">${fmt(trueVotes)}</td>
-            <td></td>
-            <td></td>
+            <td class="right">${totalPoolApr.toFixed(2)}%</td>
+            <td class="right">${usdFmt(totalPoolFeesBribes)}</td>
             <td></td>
             <td></td>
             <td></td>
             <td class="sep right">${fmt(trueActualVotes)}</td>
-            <td></td>
+            <td class="right">${totalActualApr.toFixed(2)}%</td>
             <td class="right">${usdFmt(totalActualEarn)}</td>
             <td class="sep right">${fmt(totalEqBc3Votes)}</td>
-            <td></td>
+            <td class="right">${totalEqBc3Apr.toFixed(2)}%</td>
             <td class="right">${usdFmt(totalEqBc3Earn)}</td>
             <td class="sep right">${fmt(totalOpt10BcVotes)}</td>
-            <td></td>
+            <td class="right">${totalOpt10BcApr.toFixed(2)}%</td>
             <td class="right">${usdFmt(totalOpt10BcEarn)}</td>
             <td class="sep right">${fmt(totalOpt10Votes)}</td>
-            <td></td>
+            <td class="right">${totalOpt10Apr.toFixed(2)}%</td>
             <td class="right">${usdFmt(totalOpt10Earn)}</td>
           </tr>`;
 

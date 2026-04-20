@@ -589,7 +589,7 @@ for (let i = 0; i < sortedEpochs.length; i++) {
         bribeTag =
           spans + (shown.length < r.bribe_tokens.length ? "\u2026" : "");
       }
-      return `        <tr data-reward="${r.fees_bribes_usd}" data-other-votes="${r.pool_votes - r.actual_votes}">
+      return `        <tr data-reward="${r.fees_bribes_usd}" data-other-votes="${r.pool_votes - r.actual_votes}" data-pool-name="${escapeHtml(r.pool_name)}">
             <td${pt}>${j + 1}</td>
             <td${pt}>${escapeHtml(r.pool_name)}</td>
             <td${pt}>${poolTypeLabel[r.pool_type] ?? ""}</td>
@@ -618,7 +618,7 @@ for (let i = 0; i < sortedEpochs.length; i++) {
   sections.push(`  <details>
     <summary>Epoch ${first.epoch_number} ${epochTiming}</summary>
     <div class="scroll">
-      <table data-aero-usd="${first.aero_usd}" data-voter-total="${trueActualVotes}">
+      <table data-aero-usd="${first.aero_usd}" data-voter-total="${trueActualVotes}" data-epoch-num="${first.epoch_number}">
         <thead>
           <tr>
             <th>#</th>
@@ -664,7 +664,8 @@ const buildVoteList = (
   label: string,
   voteFn: (r: EpochRecord) => number,
   pctFn: (r: EpochRecord) => number,
-  earnFn: (r: EpochRecord) => number
+  earnFn: (r: EpochRecord) => number,
+  strategyAttr: string = ""
 ) => {
   const items = latestRecords
     .filter((r) => Math.round(pctFn(r)) > 0)
@@ -678,7 +679,7 @@ const buildVoteList = (
     .join("\n");
   if (!items) return "";
   const totalEarn = latestRecords.reduce((s, r) => s + earnFn(r), 0);
-  return `      <div class="vote-strategy"><strong>${label}</strong><ul>\n${items}\n      </ul><p class="vote-earnings">Earnings: ${usdFmt(
+  return `      <div class="vote-strategy"${strategyAttr}><strong>${label}</strong><ul>\n${items}\n      </ul><p class="vote-earnings">Earnings: ${usdFmt(
     totalEarn
   )}</p></div>`;
 };
@@ -688,7 +689,8 @@ const strategyVotesHtml = [
     "Current Votes",
     (r) => r.actual_votes,
     (r) => r.actual_vote_pct,
-    (r) => r.actual_earnings_usd
+    (r) => r.actual_earnings_usd,
+    ' data-strategy="current"'
   ),
   buildVoteList(
     "PropBC5 Votes",
@@ -832,9 +834,28 @@ ${sections.join("\n")}
   (function() {
     var fmtN = function(n) { return n.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0}); };
     var fmtU = function(n) { return '$' + fmtN(n); };
-    document.querySelectorAll('table[data-aero-usd]').forEach(function(table) {
+    var allTables = document.querySelectorAll('table[data-aero-usd]');
+    var latestEpochNum = allTables.length ? parseInt(allTables[0].dataset.epochNum) : NaN;
+    var currentStrategyDiv = document.querySelector('.vote-strategy[data-strategy="current"]');
+    var currentList = currentStrategyDiv ? currentStrategyDiv.querySelector('ul') : null;
+    var currentEarnings = currentStrategyDiv ? currentStrategyDiv.querySelector('.vote-earnings') : null;
+    function updateCurrentStrategies(rowsInfo, totalEarn) {
+      if (!currentList || !currentEarnings) return;
+      var items = rowsInfo
+        .filter(function(r) { return Math.round(r.pct) > 0; })
+        .sort(function(a, b) { return b.pct - a.pct; });
+      currentList.textContent = '';
+      items.forEach(function(r) {
+        var li = document.createElement('li');
+        li.textContent = r.poolName + ' \u2013 ' + r.pct.toFixed(1) + '%';
+        currentList.appendChild(li);
+      });
+      currentEarnings.textContent = 'Earnings: ' + fmtU(totalEarn);
+    }
+    allTables.forEach(function(table) {
       var aeroUsd = parseFloat(table.dataset.aeroUsd);
       var voterTotal = parseFloat(table.dataset.voterTotal);
+      var epochNum = parseInt(table.dataset.epochNum);
       var rows = table.querySelectorAll('tbody tr:not(.total)');
       rows.forEach(function(row) {
         var cell = row.querySelector('.actual-pct-cell');
@@ -852,6 +873,7 @@ ${sections.join("\n")}
       function recalc() {
         var totalVotes = 0, totalEarn = 0, totalPct = 0;
         var inputs = [];
+        var rowsInfo = [];
         rows.forEach(function(row) {
           var input = row.querySelector('.actual-pct');
           if (!input) return;
@@ -867,6 +889,7 @@ ${sections.join("\n")}
           totalEarn += earn;
           totalPct += pct;
           inputs.push({ input: input, pct: pct });
+          rowsInfo.push({ poolName: row.dataset.poolName, pct: pct, earn: earn });
         });
         var over = totalPct > 100 + 1e-9;
         inputs.forEach(function(x) {
@@ -880,6 +903,9 @@ ${sections.join("\n")}
           totalRow.querySelector('.actual-total-votes').textContent = fmtN(totalVotes);
           totalRow.querySelector('.actual-total-apr').textContent = totalApr.toFixed(2) + '%';
           totalRow.querySelector('.actual-total-earn').textContent = fmtU(totalEarn);
+        }
+        if (epochNum === latestEpochNum) {
+          updateCurrentStrategies(rowsInfo, totalEarn);
         }
       }
       table.addEventListener('input', function(e) {

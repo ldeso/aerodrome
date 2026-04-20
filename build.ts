@@ -501,7 +501,7 @@ const svgAll = buildSvg(epochSummaries, "chart-all-svg");
 const sections: string[] = [];
 for (let i = 0; i < sortedEpochs.length; i++) {
   const [, epochRecords] = sortedEpochs[i];
-  epochRecords.sort((a, b) => b.pool_votes - a.pool_votes);
+  epochRecords.sort((a, b) => b.fees_bribes_usd - a.fees_bribes_usd);
   const first = epochRecords[0];
 
   const trueVotes = epochTotals.get(first.epoch_ts) ?? 0;
